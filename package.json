@@ -1,0 +1,17 @@
+{
+  "name": "esp32-gpio-relay",
+  "version": "1.0.0",
+  "description": "WebSocket relay server para ESP32 GPIO PRO",
+  "main": "relay.js",
+  "scripts": {
+    "start": "node relay.js",
+    "dev":   "LOG_LEVEL=debug node relay.js",
+    "pm2":   "pm2 start relay.js --name gpio-relay"
+  },
+  "dependencies": {
+    "ws": "^8.16.0"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  }
+}
