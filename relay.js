@@ -63,6 +63,22 @@ function requestHandler(req, res) {
   const parsed = url.parse(req.url, true);
   const pathname = parsed.pathname;
 
+  // ── CORS preflight — siempre primero ──────────────────────────────────
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204, {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+      'Access-Control-Allow-Headers': 'X-Token, Content-Type',
+      'Access-Control-Max-Age': '86400'
+    });
+    res.end();
+    return;
+  }
+
+  // Agregar CORS a todas las respuestas
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Headers', 'X-Token, Content-Type');
+
   // Página de control embebida
   if (pathname === '/control') {
     const id = parsed.query.id || '';
@@ -155,18 +171,6 @@ function requestHandler(req, res) {
         res.end(responseBody);
       };
     });
-    return;
-  }
-
-  // OPTIONS para CORS preflight
-  if (req.method === 'OPTIONS') {
-    res.writeHead(204, {
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-      'Access-Control-Allow-Headers': 'X-Token, Content-Type',
-      'Access-Control-Max-Age': '86400'
-    });
-    res.end();
     return;
   }
 
