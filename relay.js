@@ -93,6 +93,83 @@ function requestHandler(req, res) {
     return;
   }
 
+
+  // ── Proxy REST → ESP32 ────────────────────────────────────────────────
+  // POST /proxy?id=DEVICE_ID&path=/api/login
+  // Reenvía la petición HTTP al ESP32 y devuelve la respuesta
+  if (pathname === '/proxy') {
+    const deviceId = parsed.query.id    || '';
+    const apiPath  = parsed.query.path  || '/api/info';
+    const token    = parsed.query.token || '';
+
+    if (!deviceId) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'id requerido' }));
+      return;
+    }
+
+    // El device debe estar conectado y tener IP conocida
+    const room = rooms[deviceId];
+    if (!room || !room.device || room.device.readyState !== WebSocket.OPEN) {
+      res.writeHead(503, { 'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*' });
+      res.end(JSON.stringify({ error: 'Device offline' }));
+      return;
+    }
+
+    // Leer body de la petición
+    let body = '';
+    req.on('data', chunk => body += chunk);
+    req.on('end', () => {
+      // Usar un requestId único para correlacionar la respuesta
+      const reqId = crypto.randomBytes(8).toString('hex');
+
+      // Enviar la petición al device via WebSocket con un protocolo especial
+      const proxyMsg = JSON.stringify({
+        type: 'PROXY_REQ',
+        reqId,
+        method: req.method,
+        path: apiPath,
+        token,
+        body
+      });
+
+      room.device.send(proxyMsg);
+
+      // Esperar respuesta del device (timeout 5s)
+      const timeout = setTimeout(() => {
+        res.writeHead(504, { 'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*' });
+        res.end(JSON.stringify({ error: 'Timeout esperando respuesta del device' }));
+        delete room._proxyCallbacks?.[reqId];
+      }, 5000);
+
+      if (!room._proxyCallbacks) room._proxyCallbacks = {};
+      room._proxyCallbacks[reqId] = function(responseBody, statusCode) {
+        clearTimeout(timeout);
+        res.writeHead(statusCode || 200, {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Headers': 'X-Token, Content-Type'
+        });
+        res.end(responseBody);
+      };
+    });
+    return;
+  }
+
+  // OPTIONS para CORS preflight
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204, {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+      'Access-Control-Allow-Headers': 'X-Token, Content-Type',
+      'Access-Control-Max-Age': '86400'
+    });
+    res.end();
+    return;
+  }
+
   res.writeHead(404);
   res.end('Not found');
 }
@@ -154,9 +231,24 @@ wss.on('connection', (ws, req) => {
 
     ws.on('message', (raw) => {
       room.lastSeen = new Date().toISOString();
-      log('debug', `[${id}] Device → Clients: ${raw.toString().substring(0,80)}`);
+      const msg = raw.toString();
+
+      // Verificar si es una respuesta proxy REST
+      try {
+        const parsed = JSON.parse(msg);
+        if (parsed.type === 'PROXY_RES' && parsed.reqId) {
+          const cb = room._proxyCallbacks?.[parsed.reqId];
+          if (cb) {
+            delete room._proxyCallbacks[parsed.reqId];
+            cb(parsed.body || '{}', parsed.status || 200);
+            return; // No broadcast al cliente
+          }
+        }
+      } catch(e) {}
+
+      log('debug', `[${id}] Device → Clients: ${msg.substring(0,80)}`);
       // Reenviar estado a todos los clientes
-      broadcastToClients(id, raw.toString(), null);
+      broadcastToClients(id, msg, null);
     });
 
     ws.on('close', (code) => {
